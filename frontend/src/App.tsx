@@ -181,7 +181,7 @@ function App() {
                     <AnswerCard
                       key={answer.id}
                       answer={answer}
-                      showProvider={currentRun.status === 'complete'}
+                      showProvider={!currentRun.blind_review || currentRun.status === 'complete'}
                       rank={currentRun.aggregation ? index : undefined}
                       isWinner={currentRun.aggregation?.final_ranking[0] === answer.label}
                     />
