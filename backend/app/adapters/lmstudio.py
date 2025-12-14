@@ -12,7 +12,7 @@ class LMStudioAdapter(BaseAdapter):
     provider_name = "lmstudio"
 
     def __init__(self, base_url: str):
-        self.base_url = base_url.rstrip("/") if base_url else ""
+        self.base_url = self._normalize_base_url(base_url)
         self.client = (
             openai.AsyncOpenAI(api_key="lm-studio", base_url=self.base_url)
             if self.base_url
@@ -139,3 +139,11 @@ class LMStudioAdapter(BaseAdapter):
         except json.JSONDecodeError:
             pass
         return {"reviews": [], "rank_order": [], "confidence": 0.5}
+
+    def _normalize_base_url(self, url: str) -> str:
+        if not url:
+            return ""
+        cleaned = url.rstrip("/")
+        if not cleaned.endswith("/v1"):
+            cleaned = f"{cleaned}/v1"
+        return cleaned
