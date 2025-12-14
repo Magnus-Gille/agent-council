@@ -12,9 +12,10 @@ class LMStudioAdapter(BaseAdapter):
     provider_name = "lmstudio"
 
     def __init__(self, base_url: str):
-        self.base_url = self._normalize_base_url(base_url)
+        self.base_url = base_url.rstrip("/") if base_url else ""
+        client_base = f"{self.base_url}/v1" if self.base_url else ""
         self.client = (
-            openai.AsyncOpenAI(api_key="lm-studio", base_url=self.base_url)
+            openai.AsyncOpenAI(api_key="lm-studio", base_url=client_base)
             if self.base_url
             else None
         )
@@ -23,14 +24,13 @@ class LMStudioAdapter(BaseAdapter):
         if not self.base_url:
             return []
         try:
-            with httpx.Client(base_url=self.base_url, timeout=10.0) as client:
-                resp = client.get("/v1/models")
-                resp.raise_for_status()
-                payload = resp.json()
-                models = []
-                for model in payload.get("data", []):
-                    models.append({"id": model.get("id", ""), "display_name": model.get("id", "")})
-                return models
+            resp = httpx.get(f"{self.base_url}/v1/models", timeout=10.0)
+            resp.raise_for_status()
+            payload = resp.json()
+            models = []
+            for model in payload.get("data", []):
+                models.append({"id": model.get("id", ""), "display_name": model.get("id", "")})
+            return models
         except Exception:
             return []
 
@@ -139,11 +139,3 @@ class LMStudioAdapter(BaseAdapter):
         except json.JSONDecodeError:
             pass
         return {"reviews": [], "rank_order": [], "confidence": 0.5}
-
-    def _normalize_base_url(self, url: str) -> str:
-        if not url:
-            return ""
-        cleaned = url.rstrip("/")
-        if not cleaned.endswith("/v1"):
-            cleaned = f"{cleaned}/v1"
-        return cleaned
