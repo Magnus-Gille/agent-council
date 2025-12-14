@@ -8,7 +8,6 @@ import {
   ReviewSection,
   RunHistory,
   ProgressIndicator,
-  ChristmasEffects,
 } from './components';
 import './App.css';
 
@@ -19,6 +18,22 @@ function App() {
   const [evaluating, setEvaluating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyRefresh, setHistoryRefresh] = useState(0);
+
+  const pollRunUntilComplete = async (
+    runId: number,
+    maxAttempts = 20,
+    delayMs = 1500
+  ): Promise<Run> => {
+    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const run = await getRun(runId);
+      if (run.status === 'complete' || run.status === 'failed' || run.aggregation) {
+        return run;
+      }
+      await delay(delayMs);
+    }
+    return getRun(runId);
+  };
 
   const handleSubmit = async (question: string, blindReview: boolean) => {
     if (selectedModels.length < 2) {
@@ -60,9 +75,17 @@ function App() {
     setError(null);
 
     try {
-      const run = await evaluateRun(currentRun.id);
-      setCurrentRun(run);
+      const runId = currentRun.id;
+      const startedRun = await evaluateRun(runId);
+      setCurrentRun(startedRun);
+
+      const completedRun = await pollRunUntilComplete(runId);
+      setCurrentRun(completedRun);
       setHistoryRefresh((n) => n + 1);
+
+      if (completedRun.status === 'failed') {
+        setError('Evaluation failed. Please try again.');
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Evaluation failed');
     } finally {
@@ -107,7 +130,6 @@ function App() {
 
   return (
     <div className="app">
-      <ChristmasEffects />
       <header>
         <h1>Agent Council</h1>
         <p>Multi-model AI evaluation and voting</p>
