@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections import Counter, defaultdict
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,34 @@ class RunOrchestrator:
         self.settings = get_settings()
         self.evaluation_service = EvaluationService()
         self.voting_service = VotingService()
+
+    def _compute_instance_labels(self, models: list[SelectedModelORM]) -> dict[int, str]:
+        """Ensure every selected model has a stable, unique instance label."""
+        duplicates = Counter((m.provider, m.model_name) for m in models)
+        per_model_counts: dict[tuple[str, str], int] = defaultdict(int)
+        label_usage: dict[str, int] = defaultdict(int)
+        label_map: dict[int, str] = {}
+
+        for model in models:
+            key = (model.provider, model.model_name)
+            per_model_counts[key] += 1
+            params = model.params or {}
+
+            label = params.get("instance_label")
+            if not label:
+                label = model.model_name
+                if duplicates[key] > 1:
+                    label = f"{model.model_name} #{per_model_counts[key]}"
+
+            label_usage[label] += 1
+            if label_usage[label] > 1:
+                label = f"{label} #{label_usage[label]}"
+
+            params["instance_label"] = label
+            model.params = params
+            label_map[model.id] = label
+
+        return label_map
 
     async def get_run(self, run_id: int) -> Optional[RunORM]:
         result = await self.db.execute(
@@ -53,12 +82,33 @@ class RunOrchestrator:
         self.db.add(run)
         await self.db.flush()
 
+        duplicates = Counter((m["provider"], m["model_name"]) for m in selected_models)
+        per_model_counts: dict[tuple[str, str], int] = defaultdict(int)
+        label_usage: dict[str, int] = defaultdict(int)
+
         for model_config in selected_models:
+            key = (model_config["provider"], model_config["model_name"])
+            per_model_counts[key] += 1
+
+            params = model_config.get("params", {}) or {}
+            label = params.get("instance_label")
+
+            if not label:
+                label = model_config["model_name"]
+                if duplicates[key] > 1:
+                    label = f"{model_config['model_name']} #{per_model_counts[key]}"
+
+            label_usage[label] += 1
+            if label_usage[label] > 1:
+                label = f"{label} #{label_usage[label]}"
+
+            params["instance_label"] = label
+
             selected = SelectedModelORM(
                 run_id=run.id,
                 provider=model_config["provider"],
                 model_name=model_config["model_name"],
-                params=model_config.get("params", {}),
+                params=params,
             )
             self.db.add(selected)
 
@@ -73,6 +123,7 @@ class RunOrchestrator:
         run.status = RunStatus.GENERATING_ANSWERS.value
         await self.db.commit()
 
+        instance_labels = self._compute_instance_labels(run.selected_models)
         semaphore = asyncio.Semaphore(self.settings.max_concurrency)
 
         async def generate_one(model_config: SelectedModelORM) -> AnswerResult:
@@ -96,9 +147,11 @@ class RunOrchestrator:
                 result = AnswerResult(text="", latency_ms=0, error=str(result))
 
             label = labels[i] if i < len(labels) else f"Z{i - 25}"
+            producer_label = instance_labels.get(model_config.id, model_config.model_name)
+
             answer = AnswerORM(
                 run_id=run.id,
-                producer_model=model_config.model_name,
+                producer_model=producer_label,
                 provider=model_config.provider,
                 label=label,
                 text=result.text,
@@ -124,6 +177,7 @@ class RunOrchestrator:
 
         run.status = RunStatus.EVALUATING.value
         await self.db.commit()
+        instance_labels = self._compute_instance_labels(run.selected_models)
 
         # Get successful answers
         answers = [
@@ -148,9 +202,37 @@ class RunOrchestrator:
         # Use specified reviewers or default to the answering models
         if reviewer_models:
             reviewers = reviewer_models
+            duplicates = Counter((r["provider"], r["model_name"]) for r in reviewers)
+            per_model_counts: dict[tuple[str, str], int] = defaultdict(int)
+            label_usage: dict[str, int] = defaultdict(int)
+
+            for reviewer in reviewers:
+                key = (reviewer["provider"], reviewer["model_name"])
+                per_model_counts[key] += 1
+
+                params = reviewer.get("params", {}) or {}
+                label = reviewer.get("instance_label") or params.get("instance_label")
+
+                if not label:
+                    label = reviewer["model_name"]
+                    if duplicates[key] > 1:
+                        label = f"{reviewer['model_name']} #{per_model_counts[key]}"
+
+                label_usage[label] += 1
+                if label_usage[label] > 1:
+                    label = f"{label} #{label_usage[label]}"
+
+                params["instance_label"] = label
+                reviewer["params"] = params
+                reviewer["instance_label"] = label
         else:
             reviewers = [
-                {"provider": m.provider, "model_name": m.model_name, "params": m.params}
+                {
+                    "provider": m.provider,
+                    "model_name": m.model_name,
+                    "params": m.params,
+                    "instance_label": instance_labels.get(m.id, m.model_name),
+                }
                 for m in run.selected_models
             ]
 
@@ -191,9 +273,15 @@ class RunOrchestrator:
                 logger.error(f"Review error: {review_result.error}")
                 continue
 
+            reviewer_label = (
+                reviewer.get("instance_label")
+                or reviewer.get("params", {}).get("instance_label")
+                or reviewer["model_name"]
+            )
+
             review_orm = ReviewORM(
                 run_id=run.id,
-                reviewer_model=reviewer["model_name"],
+                reviewer_model=reviewer_label,
                 reviewer_provider=reviewer["provider"],
                 reviews=[r for r in review_result.parsed_reviews],
                 rank_order=review_result.rank_order,
@@ -203,7 +291,7 @@ class RunOrchestrator:
             self.db.add(review_orm)
 
             review_data.append({
-                "reviewer_model": reviewer["model_name"],
+                "reviewer_model": reviewer_label,
                 "reviewer_provider": reviewer["provider"],
                 "reviews": review_result.parsed_reviews,
                 "rank_order": review_result.rank_order,

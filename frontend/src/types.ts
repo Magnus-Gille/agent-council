@@ -2,6 +2,7 @@ export interface ModelParams {
   temperature: number;
   max_tokens: number;
   system_prompt?: string;
+  instance_label?: string;
 }
 
 export interface SelectedModel {
