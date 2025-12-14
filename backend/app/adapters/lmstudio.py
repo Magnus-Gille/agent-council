@@ -100,11 +100,12 @@ class LMStudioAdapter(BaseAdapter):
 
         start_time = time.perf_counter()
         try:
+            adjusted_max_tokens = min(max_tokens, 2048)
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": review_prompt}],
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_tokens=adjusted_max_tokens,
             )
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             raw_text = response.choices[0].message.content
