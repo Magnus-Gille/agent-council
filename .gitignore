@@ -36,3 +36,6 @@ coverage/
 # Editors / OS
 .idea/
 .vscode/
+
+# Playwright captures
+.playwright-mcp/
