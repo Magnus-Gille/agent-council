@@ -12,8 +12,23 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    let message = `HTTP ${response.status}`;
+    try {
+      const error = await response.json();
+      if (error?.detail) {
+        message = Array.isArray(error.detail)
+          ? error.detail.map((d: any) => d.msg || d).join(', ')
+          : error.detail;
+      }
+    } catch {
+      try {
+        const text = await response.text();
+        if (text) message = `${message}: ${text.slice(0, 400)}`;
+      } catch {
+        /* swallow */
+      }
+    }
+    throw new Error(message);
   }
 
   return response.json();
