@@ -34,6 +34,7 @@ Local web app to ask the same question to multiple AI models (Anthropic, OpenAI,
 ## Configuration
 - Backend config via `backend/.env` (see `.env.example`):
   - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`
+  - `LMSTUDIO_BASE_URL` (optional local OpenAI-compatible server, e.g. `http://localhost:1234`)
   - `DATABASE_URL` (defaults to local SQLite)
   - `MAX_CONCURRENCY`, `HOST`, `PORT`
 

@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     google_api_key: str = ""
+    lmstudio_base_url: str = ""
     database_url: str = "sqlite+aiosqlite:///./agent_council.db"
     host: str = "127.0.0.1"
     port: int = 8000
