@@ -1,0 +1,38 @@
+# General
+.DS_Store
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.pytest_cache/
+.venv/
+.env
+.env.*
+backend/.env
+backend/.env.*
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+backend/agent_council.db
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.turbo/
+npm-debug.log*
+yarn-error.log*
+
+# Build / Coverage
+build/
+dist/
+coverage/
+
+# Editors / OS
+.idea/
+.vscode/

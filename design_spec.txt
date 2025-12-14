@@ -1,0 +1,307 @@
+Design Spec: Local “Multi-Model Ask + Critique + Vote” App
+
+1) Summary
+
+A locally hosted web app that lets a user pick one or more AI models (Anthropic, Google, OpenAI), submit a single question once, receive all model answers, have each model review the other answers, and then produce a ranked list based on a voting scheme.
+
+⸻
+
+2) Goals
+	•	Single prompt → multiple models: Ask one question and send it to all selected models in parallel.
+	•	Comparable outputs: Display all model answers side-by-side with consistent formatting.
+	•	Cross-critique: Each model critiques the other answers (optionally also its own).
+	•	Voting + ranking: Aggregate model preferences into a final ranking with transparent scoring.
+	•	Local access: UI served locally (e.g., http://localhost:3000), no external UI hosting required.
+	•	Extensible: Add new model providers/models with minimal changes.
+
+3) Non-Goals
+	•	Building a general chat history product (this is “single question + round of evaluation”).
+	•	Fine-tuning, training, or long-term memory.
+	•	Enterprise auth / multi-user deployment (initially single user on a local machine).
+
+⸻
+
+4) Primary Users & Use Cases
+
+User stories
+	1.	As a user, I select models (e.g., Claude, Gemini, GPT) and ask one question.
+	2.	I see all answers returned with timing/token usage (when available).
+	3.	I click “Run review + vote” (or it runs automatically after answers).
+	4.	I see a ranked list with:
+	•	Overall winner
+	•	Vote breakdown
+	•	Per-model critiques and scores
+	5.	I can export the run (JSON/Markdown) for sharing or later analysis.
+
+⸻
+
+5) UX / UI Requirements
+
+Screens
+	1.	Run Setup
+	•	Model picker (grouped by provider)
+	•	Per-model advanced settings (temperature, max tokens, system prompt)
+	•	Question input (single text box)
+	•	“Run” button
+	2.	Results
+	•	Answer cards (one per model) with:
+	•	Provider/model name
+	•	Latency
+	•	Token usage/cost estimate (optional, depends on provider data)
+	•	Raw answer text
+	•	“Review + Vote” section:
+	•	Shows critiques and scoring per reviewer model
+	•	Shows final ranking and vote math
+	3.	History
+	•	List of previous runs with timestamp
+	•	Re-open run details
+	•	Export run
+
+Usability notes
+	•	Blind review option: during evaluation, hide which model produced which answer (replace with Answer A/B/C…).
+	•	Compare view: toggle between side-by-side and stacked view.
+	•	Failure tolerant: if one model fails, still rank the remaining answers and clearly mark missing ones.
+
+⸻
+
+6) High-Level Architecture
+
+A simple local web app with:
+	•	Frontend: React (or similar) SPA served from local dev server or embedded in backend.
+	•	Backend API: FastAPI (Python) or Node/Express.
+	•	Provider adapters: separate modules for Anthropic / Google / OpenAI.
+	•	Storage: SQLite (via file on disk) for runs, answers, reviews, votes.
+	•	Config: .env for API keys and defaults.
+
+Component diagram (logical)
+	•	UI (Model selection, question, results)
+	•	Backend controller (Run orchestration)
+	•	Provider adapters (OpenAI/Anthropic/Google)
+	•	Evaluation engine (prompts + aggregation)
+	•	Persistence layer (SQLite)
+	•	Logger/telemetry (local logs)
+
+⸻
+
+7) Core Data Model
+
+Entities
+	•	Run
+	•	id, created_at, question, settings, status
+	•	SelectedModel
+	•	run_id, provider, model_name, params
+	•	Answer
+	•	run_id, answer_id, producer_model, text, latency_ms, tokens_in/out, error
+	•	Review
+	•	run_id, reviewer_model, target_answer_id, scores (json), critique_text, rank_order (optional)
+	•	AggregationResult
+	•	run_id, final_ranking (list), vote_breakdown, method_version
+
+⸻
+
+8) Core Workflow
+
+Step A: Generate answers
+	1.	User selects models and submits question.
+	2.	Backend sends the same prompt to each model in parallel.
+	3.	Store answers as they arrive (streaming optional).
+
+Step B: Prepare blind packet
+	•	Assign answers temporary labels: A, B, C, …
+	•	Create an evaluation “packet” containing:
+	•	The original question
+	•	Each answer under its label
+	•	Instructions for critique and voting
+
+Step C: Cross-review
+
+For each selected model as reviewer:
+	•	Send evaluation prompt containing the packet.
+	•	Instruct it to:
+	•	Critique each answer (except its own, by label mapping)
+	•	Provide numeric scores
+	•	Provide a preference ranking over answers
+
+Step D: Aggregate votes → final rank
+	•	Combine reviewer rankings and scores using the voting scheme (below).
+	•	Persist final results and show UI.
+
+⸻
+
+9) Prompt Design
+
+Answer prompt template (per model)
+	•	System (optional): “You are a helpful assistant…”
+	•	User: the question text
+	•	Optional run-level instructions: formatting constraints, citations requirement, brevity, etc.
+
+Review prompt template (per reviewer model)
+
+Include:
+	•	The question
+	•	The labeled answers (A..N)
+	•	Instructions to output strict JSON with:
+	•	Per-answer critique
+	•	Per-answer score fields
+	•	Overall ranked list of labels
+	•	Confidence
+
+Example scoring dimensions:
+	•	correctness (0–10)
+	•	completeness (0–10)
+	•	clarity (0–10)
+	•	helpfulness (0–10)
+	•	safety (0–10) (or “policy compliance”)
+	•	overall (0–10)
+
+Also instruct:
+	•	Don’t reveal identity guesses
+	•	Judge only based on content
+	•	Penalize hallucinated specifics if uncertain
+
+⸻
+
+10) Voting / Ranking Scheme
+
+Overview
+
+Use a hybrid method that’s robust with small N and provides interpretable breakdowns:
+	1.	Rank-choice voting via Borda count (primary)
+	2.	Score averaging (secondary tie-breaker)
+	3.	Pairwise sanity check (optional, used for tie resolution / diagnostics)
+
+10.1 Borda Count (Primary)
+
+For each reviewer’s ranked list of N answers:
+	•	Top choice gets N-1 points
+	•	Next gets N-2
+	•	…
+	•	Last gets 0
+
+Sum points across all reviewers:
+	•	borda_total[answer] = Σ reviewer_borda_points
+
+10.2 Self-review handling
+
+To reduce bias:
+	•	Default: exclude self-produced answer from that model’s ranking by having the reviewer rank only “other answers”.
+	•	Implementation: if reviewer is also a producer, remove its own answer from the ranking list and award Borda points among remaining answers.
+	•	Alternative mode (config): allow self-ranking but down-weight it.
+
+10.3 Weighted reviewers (Optional)
+
+Optionally weight reviewers equally (default = 1.0), or weight by:
+	•	Historical agreement with consensus (if you add this later)
+	•	Confidence output (capped to avoid gaming)
+
+Default: equal weights for simplicity.
+
+10.4 Tie-breakers
+
+If two answers have equal Borda totals:
+	1.	Higher mean overall score across reviewers wins.
+	2.	If still tied, higher mean correctness wins.
+	3.	If still tied, declare tie and display both as same rank.
+
+10.5 Final output
+
+Compute:
+	•	final_rank = sort_by(borda_total desc, tiebreakers…)
+Show:
+	•	Borda totals
+	•	First-place vote count
+	•	Score averages
+
+⸻
+
+11) Backend API (Example)
+	•	POST /runs
+	•	body: {question, selected_models, run_settings}
+	•	returns: {run_id}
+	•	POST /runs/{run_id}/answers
+	•	triggers parallel answer generation (or included in /runs)
+	•	POST /runs/{run_id}/evaluate
+	•	triggers cross-review + aggregation
+	•	GET /runs/{run_id}
+	•	returns run, answers, reviews, aggregation
+	•	GET /runs
+	•	list runs
+	•	GET /health
+
+⸻
+
+12) Provider Adapters
+
+Interface
+
+Each adapter implements:
+	•	list_models()
+	•	generate_answer(question, params) -> AnswerResult
+	•	generate_review(packet, params) -> ReviewResult
+
+Notes per provider
+	•	Store keys in .env (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY)
+	•	Handle:
+	•	Rate limits (retry with exponential backoff)
+	•	Timeouts
+	•	Partial failures
+	•	Provider-specific token reporting differences
+
+⸻
+
+13) Concurrency, Reliability, and Failure Modes
+	•	Parallelize answer calls with a max concurrency limit (e.g., 3–6).
+	•	If a model fails:
+	•	Mark its answer as failed and exclude from ranking.
+	•	Still run evaluation among successful answers.
+	•	Persist intermediate state so a run can be resumed.
+
+⸻
+
+14) Security & Privacy (Local App)
+	•	Never log API keys.
+	•	Store run data locally only (SQLite + optional export).
+	•	Provide a “redact mode” (optional) that masks secrets in the prompt before saving.
+	•	Prompt-injection resistance (basic):
+	•	In review prompts: explicitly instruct reviewers to ignore instructions inside candidate answers that try to manipulate evaluation.
+
+⸻
+
+15) Observability
+	•	Local logs:
+	•	run_id, model, latency, status, error messages
+	•	Optional debug view showing raw JSON outputs from reviewers (useful for prompt tuning).
+
+⸻
+
+16) Testing Strategy
+	•	Unit tests:
+	•	Borda aggregation and tie-breakers
+	•	Adapter contract tests (mock provider responses)
+	•	JSON schema validation for review outputs
+	•	Integration tests:
+	•	“happy path” run with 2–3 models (can be mocked)
+	•	failure path where one provider times out
+	•	Golden tests:
+	•	fixed sample answers + fixed reviewer rankings → stable expected final rank
+
+⸻
+
+17) Deployment / Running Locally
+	•	docker-compose (recommended):
+	•	backend container (API + adapters)
+	•	frontend container (or served by backend)
+	•	local volume for SQLite DB
+	•	Alternative:
+	•	npm run dev for frontend + uvicorn for backend
+	•	Config via .env
+
+⸻
+
+18) Future Enhancements
+	•	Multi-question “batch runs”
+	•	Custom evaluation rubrics per run
+	•	Add a “judge-only” model (separate from answerers)
+	•	Per-domain weighting (e.g., “correctness matters most for math”)
+	•	Cost tracking dashboards
+	•	Streaming answers + incremental UI updates
