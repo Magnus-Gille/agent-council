@@ -242,6 +242,7 @@ class RunOrchestrator:
             ]
 
         semaphore = asyncio.Semaphore(self.settings.max_concurrency)
+        max_review_attempts = 2
 
         async def review_one(reviewer: dict) -> tuple[dict, ReviewResult]:
             async with semaphore:
@@ -255,27 +256,35 @@ class RunOrchestrator:
                     exclude_label=None,  # Don't exclude any answers - blind review
                 )
 
-                result = await adapter.generate_review(
-                    model=reviewer["model_name"],
-                    review_prompt=prompt,
-                    temperature=0.3,
-                    max_tokens=4096,
-                )
-                return reviewer, result
+                last_result: ReviewResult | None = None
+                for attempt in range(max_review_attempts):
+                    result = await adapter.generate_review(
+                        model=reviewer["model_name"],
+                        review_prompt=prompt,
+                        temperature=0.3,
+                        max_tokens=4096,
+                    )
+                    last_result = result
+                    if not result.error:
+                        break
+                return reviewer, last_result  # type: ignore[arg-type]
 
         logger.info(f"Starting evaluation with {len(reviewers)} reviewers")
         tasks = [review_one(r) for r in reviewers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         review_data = []
+        review_failures: list[str] = []
         for result in results:
             if isinstance(result, Exception):
                 logger.error(f"Review exception: {result}")
+                review_failures.append(str(result))
                 continue
             reviewer, review_result = result
             logger.info(f"Review from {reviewer['provider']}:{reviewer['model_name']} - error: {review_result.error}, rank_order: {review_result.rank_order}, parsed_reviews count: {len(review_result.parsed_reviews)}")
             if review_result.error:
                 logger.error(f"Review error: {review_result.error}")
+                review_failures.append(f"{reviewer.get('instance_label') or reviewer['model_name']}: {review_result.error}")
                 continue
 
             rank_order = review_result.rank_order or []
@@ -295,10 +304,18 @@ class RunOrchestrator:
                     logger.warning(f"Could not derive rank_order: {exc}")
 
             if not rank_order:
-                logger.warning(
-                    f"Skipping review from {reviewer['provider']}:{reviewer.get('instance_label') or reviewer.get('model_name')} due to empty rank_order"
-                )
-                continue
+                fallback_labels = [a["label"] for a in answers if a.get("label")]
+                if len(fallback_labels) >= 2:
+                    rank_order = fallback_labels
+                    logger.warning(
+                        f"Using fallback rank order for {reviewer['provider']}:{reviewer.get('instance_label') or reviewer.get('model_name')} -> {rank_order}"
+                    )
+                else:
+                    logger.warning(
+                        f"Skipping review from {reviewer['provider']}:{reviewer.get('instance_label') or reviewer.get('model_name')} due to empty rank_order"
+                    )
+                    review_failures.append(f"{reviewer.get('instance_label') or reviewer['model_name']}: empty rank_order")
+                    continue
 
             reviewer_label = (
                 reviewer.get("instance_label")
@@ -327,10 +344,13 @@ class RunOrchestrator:
         await self.db.flush()
 
         # Aggregate votes
-        if not review_data:
+        if not review_data or len(review_data) < len(reviewers):
             run.status = RunStatus.FAILED.value
             await self.db.commit()
-            raise ValueError("No valid reviews returned; check model outputs or try again")
+            detail = "No valid reviews returned" if not review_data else "Some reviewers failed"
+            if review_failures:
+                detail += f": {', '.join(review_failures)}"
+            raise ValueError(detail)
 
         aggregation = self.voting_service.aggregate_votes(
             reviews=review_data,
