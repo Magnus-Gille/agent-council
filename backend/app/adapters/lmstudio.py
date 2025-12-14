@@ -131,10 +131,16 @@ class LMStudioAdapter(BaseAdapter):
 
     def _parse_review_response(self, raw_text: str) -> dict:
         try:
-            start = raw_text.find("{")
-            end = raw_text.rfind("}") + 1
+            cleaned = raw_text.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.strip("`")
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:].strip()
+
+            start = cleaned.find("{")
+            end = cleaned.rfind("}") + 1
             if start >= 0 and end > start:
-                json_str = raw_text[start:end]
+                json_str = cleaned[start:end]
                 return json.loads(json_str)
         except json.JSONDecodeError:
             pass

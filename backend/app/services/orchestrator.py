@@ -273,6 +273,28 @@ class RunOrchestrator:
                 logger.error(f"Review error: {review_result.error}")
                 continue
 
+            rank_order = review_result.rank_order or []
+            if not rank_order and review_result.parsed_reviews:
+                # Derive ranking from scores if the model omitted rank_order
+                try:
+                    ranked = sorted(
+                        review_result.parsed_reviews,
+                        key=lambda r: (
+                            r.get("scores", {}).get("overall", 0),
+                            r.get("scores", {}).get("correctness", 0),
+                        ),
+                        reverse=True,
+                    )
+                    rank_order = [r.get("label") for r in ranked if r.get("label")]
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(f"Could not derive rank_order: {exc}")
+
+            if not rank_order:
+                logger.warning(
+                    f"Skipping review from {reviewer['provider']}:{reviewer.get('instance_label') or reviewer.get('model_name')} due to empty rank_order"
+                )
+                continue
+
             reviewer_label = (
                 reviewer.get("instance_label")
                 or reviewer.get("params", {}).get("instance_label")
@@ -284,7 +306,7 @@ class RunOrchestrator:
                 reviewer_model=reviewer_label,
                 reviewer_provider=reviewer["provider"],
                 reviews=[r for r in review_result.parsed_reviews],
-                rank_order=review_result.rank_order,
+                rank_order=rank_order,
                 confidence=review_result.confidence,
                 raw_response=review_result.raw_response,
             )
@@ -294,7 +316,7 @@ class RunOrchestrator:
                 "reviewer_model": reviewer_label,
                 "reviewer_provider": reviewer["provider"],
                 "reviews": review_result.parsed_reviews,
-                "rank_order": review_result.rank_order,
+                "rank_order": rank_order,
             })
 
         await self.db.flush()
