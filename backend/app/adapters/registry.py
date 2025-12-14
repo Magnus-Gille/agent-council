@@ -5,6 +5,7 @@ from .base import BaseAdapter
 from .anthropic import AnthropicAdapter
 from .openai import OpenAIAdapter
 from .google import GoogleAdapter
+from .lmstudio import LMStudioAdapter
 
 
 class AdapterRegistry:
@@ -14,6 +15,7 @@ class AdapterRegistry:
             "anthropic": AnthropicAdapter(settings.anthropic_api_key),
             "openai": OpenAIAdapter(settings.openai_api_key),
             "google": GoogleAdapter(settings.google_api_key),
+            "lmstudio": LMStudioAdapter(settings.lmstudio_base_url),
         }
 
     def get_adapter(self, provider: str) -> BaseAdapter:

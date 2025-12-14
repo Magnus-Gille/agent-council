@@ -7,6 +7,13 @@ interface Props {
   onChange: (models: SelectedModel[]) => void;
 }
 
+const providerLabels: Record<string, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  google: 'Google',
+  lmstudio: 'LM Studio (Local)',
+};
+
 const defaultParams: ModelParams = {
   temperature: 0.7,
   max_tokens: 2048,
@@ -65,7 +72,10 @@ export function ModelSelector({ selectedModels, onChange }: Props) {
       <h3>Select Models</h3>
       {Object.entries(groupedModels).map(([provider, models]) => (
         <div key={provider} className="provider-group">
-          <h4>{provider.charAt(0).toUpperCase() + provider.slice(1)}</h4>
+          <h4>
+            {providerLabels[provider] || provider}
+            {provider === 'lmstudio' && <span className="provider-tag">Local</span>}
+          </h4>
           <div className="models-list">
             {models.map((model) => (
               <label key={`${model.provider}-${model.model_id}`} className="model-item">
