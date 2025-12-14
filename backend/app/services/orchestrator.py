@@ -178,6 +178,11 @@ class RunOrchestrator:
         run.status = RunStatus.EVALUATING.value
         await self.db.commit()
         instance_labels = self._compute_instance_labels(run.selected_models)
+        logger.info(
+            "Starting evaluation for run %s with %s reviewers",
+            run.id,
+            len(reviewer_models) if reviewer_models else len(run.selected_models),
+        )
 
         # Get successful answers
         answers = [
@@ -322,23 +327,27 @@ class RunOrchestrator:
         await self.db.flush()
 
         # Aggregate votes
-        if review_data:
-            aggregation = self.voting_service.aggregate_votes(
-                reviews=review_data,
-                label_to_model=label_to_model,
-            )
+        if not review_data:
+            run.status = RunStatus.FAILED.value
+            await self.db.commit()
+            raise ValueError("No valid reviews returned; check model outputs or try again")
 
-            agg_orm = AggregationResultORM(
-                run_id=run.id,
-                final_ranking=aggregation.final_ranking,
-                vote_breakdown={
-                    "borda_totals": aggregation.vote_breakdown.borda_totals,
-                    "first_place_votes": aggregation.vote_breakdown.first_place_votes,
-                    "score_averages": aggregation.vote_breakdown.score_averages,
-                },
-                method_version="borda_v1",
-            )
-            self.db.add(agg_orm)
+        aggregation = self.voting_service.aggregate_votes(
+            reviews=review_data,
+            label_to_model=label_to_model,
+        )
+
+        agg_orm = AggregationResultORM(
+            run_id=run.id,
+            final_ranking=aggregation.final_ranking,
+            vote_breakdown={
+                "borda_totals": aggregation.vote_breakdown.borda_totals,
+                "first_place_votes": aggregation.vote_breakdown.first_place_votes,
+                "score_averages": aggregation.vote_breakdown.score_averages,
+            },
+            method_version="borda_v1",
+        )
+        self.db.add(agg_orm)
 
         run.status = RunStatus.COMPLETE.value
         await self.db.commit()
