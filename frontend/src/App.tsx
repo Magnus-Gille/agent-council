@@ -163,7 +163,14 @@ function App() {
           {(loading || evaluating) && (
             <ProgressIndicator
               phase={evaluating ? 'evaluating' : 'generating'}
-              models={currentRun?.selected_models?.map(m => `${m.provider}/${m.model_name}`) || selectedModels.map(m => `${m.provider}/${m.model_name}`)}
+              models={
+                currentRun?.selected_models?.map(
+                  m => m.params?.instance_label || `${m.provider}/${m.model_name}`
+                ) ||
+                selectedModels.map(
+                  m => m.params?.instance_label || `${m.provider}/${m.model_name}`
+                )
+              }
             />
           )}
 

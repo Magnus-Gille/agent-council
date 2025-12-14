@@ -17,6 +17,7 @@ class ModelParams(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048
     system_prompt: Optional[str] = None
+    instance_label: Optional[str] = None
 
 
 class SelectedModelCreate(BaseModel):
