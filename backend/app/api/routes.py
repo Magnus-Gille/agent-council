@@ -1,3 +1,6 @@
+import logging
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -12,7 +15,18 @@ from app.models.database import get_db
 from app.adapters import get_registry
 from app.services import RunOrchestrator
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _format_duration(ms: float) -> str:
+    """Format milliseconds into human-readable duration."""
+    if ms < 1000:
+        return f"{ms:.0f}ms"
+    elif ms < 60000:
+        return f"{ms/1000:.2f}s"
+    else:
+        return f"{ms/60000:.2f}min"
 
 
 def run_to_response(run: RunORM) -> RunResponse:
@@ -128,11 +142,17 @@ async def generate_answers(
     run_id: int,
     db: AsyncSession = Depends(get_db),
 ):
+    logger.info(f"[TIMING] API /runs/{run_id}/answers START")
+    request_start = time.perf_counter()
     orchestrator = RunOrchestrator(db)
     try:
         run = await orchestrator.generate_answers(run_id)
+        duration_ms = (time.perf_counter() - request_start) * 1000
+        logger.info(f"[TIMING] API /runs/{run_id}/answers COMPLETE in {_format_duration(duration_ms)}")
         return run_to_response(run)
     except ValueError as e:
+        duration_ms = (time.perf_counter() - request_start) * 1000
+        logger.error(f"[TIMING] API /runs/{run_id}/answers FAILED in {_format_duration(duration_ms)}: {e}")
         raise HTTPException(status_code=404, detail=str(e))
 
 
@@ -142,6 +162,8 @@ async def evaluate_run(
     request: EvaluateRequest = None,
     db: AsyncSession = Depends(get_db),
 ):
+    logger.info(f"[TIMING] API /runs/{run_id}/evaluate START")
+    request_start = time.perf_counter()
     orchestrator = RunOrchestrator(db)
 
     reviewer_models = None
@@ -157,8 +179,12 @@ async def evaluate_run(
 
     try:
         run = await orchestrator.run_evaluation(run_id, reviewer_models)
+        duration_ms = (time.perf_counter() - request_start) * 1000
+        logger.info(f"[TIMING] API /runs/{run_id}/evaluate COMPLETE in {_format_duration(duration_ms)}")
         return run_to_response(run)
     except ValueError as e:
+        duration_ms = (time.perf_counter() - request_start) * 1000
+        logger.error(f"[TIMING] API /runs/{run_id}/evaluate FAILED in {_format_duration(duration_ms)}: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
